@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Owns the Codex (ChatGPT-mode) OAuth credential lifecycle. Mirrors
 /// ClaudeCredentialStore but reads from ~/.codex/auth.json — Codex CLI
@@ -17,6 +18,8 @@ enum CodexCredentialStore {
     private static let maxCredentialBytes = 64 * 1024
 
     private static let cacheFilename = "codex-credentials.v1.json"
+    private static let ourKeychainService = "org.agentseal.codeburn.menubar.codex.oauth.v1"
+    private static let ourKeychainAccount = "default"
 
     private static let lock = NSLock()
     private nonisolated(unsafe) static var memoryCache: CachedRecord?
@@ -198,28 +201,74 @@ enum CodexCredentialStore {
     }
 
     private static func readOurCache() throws -> CredentialRecord? {
+        if let record = try readOurKeychainCache() {
+            return record
+        }
+
         let url = cacheFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         // Symlink-defense + size cap (same hardening as ClaudeCredentialStore).
         let data = try SafeFile.read(from: url.path, maxBytes: maxCredentialBytes)
-        return try? JSONDecoder().decode(CredentialRecord.self, from: data)
+        guard let record = try? JSONDecoder().decode(CredentialRecord.self, from: data) else { return nil }
+        try? writeOurKeychainCache(record: record)
+        try? FileManager.default.removeItem(at: url)
+        return record
     }
 
     private static func writeOurCache(record: CredentialRecord) throws {
+        try writeOurKeychainCache(record: record)
+    }
+
+    private static func readOurKeychainCache() throws -> CredentialRecord? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ourKeychainService,
+            kSecAttrAccount as String: ourKeychainAccount,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnData as String: true,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw StoreError.fileWriteFailed("keychain read failed with status \(status)")
+        }
+        return try? JSONDecoder().decode(CredentialRecord.self, from: data)
+    }
+
+    private static func writeOurKeychainCache(record: CredentialRecord) throws {
         let url = cacheFileURL()
         let data = try JSONEncoder().encode(record)
-        do {
-            // SafeFile.write opens the temp file with O_CREAT | O_EXCL | O_NOFOLLOW
-            // and the explicit 0600 mode in a single syscall — no race window
-            // where the file briefly exists at default umask, and no chance of
-            // following a malicious symlink at the destination path.
-            try SafeFile.write(data, to: url.path, mode: 0o600)
-        } catch {
-            throw StoreError.fileWriteFailed(String(describing: error))
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ourKeychainService,
+            kSecAttrAccount as String: ourKeychainAccount,
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = query
+            add.merge(attributes) { _, new in new }
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw StoreError.fileWriteFailed("keychain write failed with status \(addStatus)")
+            }
+        } else if status != errSecSuccess {
+            throw StoreError.fileWriteFailed("keychain update failed with status \(status)")
         }
+        try? FileManager.default.removeItem(at: url)
     }
 
     private static func deleteOurCache() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ourKeychainService,
+            kSecAttrAccount as String: ourKeychainAccount,
+        ]
+        SecItemDelete(query as CFDictionary)
         try? FileManager.default.removeItem(at: cacheFileURL())
     }
 

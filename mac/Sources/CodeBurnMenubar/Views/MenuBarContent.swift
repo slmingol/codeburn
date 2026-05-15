@@ -279,7 +279,7 @@ private struct Header: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if updateChecker.updateAvailable {
+                if updateChecker.updateAvailable || updateChecker.updateError != nil {
                     UpdateBadge()
                 }
                 AccentPicker()
@@ -409,18 +409,25 @@ private struct UpdateBadge: View {
 
     var body: some View {
         Button {
-            updateChecker.performUpdate()
+            if updateChecker.updateAvailable {
+                updateChecker.performUpdate()
+            } else {
+                Task { await updateChecker.check() }
+            }
         } label: {
             HStack(spacing: 4) {
                 if updateChecker.isUpdating {
                     ProgressView()
                         .controlSize(.mini)
                         .scaleEffect(0.7)
+                } else if updateChecker.updateError != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
                 } else {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 10))
                 }
-                Text(updateChecker.isUpdating ? "Updating..." : "Update")
+                Text(updateChecker.isUpdating ? "Updating..." : (updateChecker.updateError == nil ? "Update" : "Failed"))
                     .font(.system(size: 10, weight: .medium))
             }
             .padding(.horizontal, 8)
@@ -430,6 +437,7 @@ private struct UpdateBadge: View {
         .tint(Theme.brandAccent)
         .controlSize(.mini)
         .disabled(updateChecker.isUpdating)
+        .help(updateChecker.updateError ?? "Install the latest menubar build")
     }
 }
 
@@ -537,12 +545,7 @@ struct FooterBar: View {
             .fixedSize()
 
             Button {
-                // showLoading: true is safe now that the overlay condition uses
-                // `!hasCachedData` instead of `isLoading`. The button icon swaps
-                // to the spinner glyph (driven by store.isLoading), giving the
-                // user visible feedback the click was registered, but the
-                // popover body keeps the existing data instead of blanking out.
-                Task { await store.refresh(includeOptimize: false, force: true, showLoading: true) }
+                refreshNow()
             } label: {
                 Image(systemName: store.isLoading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
@@ -586,6 +589,14 @@ struct FooterBar: View {
 
     private func openReport() {
         TerminalLauncher.open(subcommand: ["report"])
+    }
+
+    private func refreshNow() {
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.refreshSubscriptionNow()
+        } else {
+            Task { await store.refresh(includeOptimize: false, force: true, showLoading: true) }
+        }
     }
 
     private enum ExportFormat {

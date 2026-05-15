@@ -38,6 +38,7 @@ struct AppStoreRefreshRecoveryTests {
 
         #expect(store.todayPayload?.current.cost == 92.33)
         #expect(store.needsInteractivePayloadRefresh)
+        #expect(store.needsStatusPayloadRefresh)
         #expect(store.hasStaleInteractivePayload)
         #expect(store.shouldResetInteractiveRefreshPipeline)
 
@@ -57,7 +58,27 @@ struct AppStoreRefreshRecoveryTests {
         )
 
         #expect(!store.needsInteractivePayloadRefresh)
+        #expect(!store.needsStatusPayloadRefresh)
         #expect(!store.hasStaleInteractivePayload)
         #expect(!store.shouldResetInteractiveRefreshPipeline)
+    }
+
+    @Test("missing today status payload needs status refresh")
+    func missingTodayStatusPayloadNeedsStatusRefresh() {
+        let store = AppStore()
+
+        #expect(store.todayPayload == nil)
+        #expect(store.needsStatusPayloadRefresh)
+    }
+
+    @Test("missing unattempted payload triggers hard recovery")
+    func missingUnattemptedPayloadTriggersHardRecovery() {
+        let store = AppStore()
+
+        #expect(!store.hasCachedData)
+        #expect(!store.hasAttemptedCurrentKeyLoad)
+        #expect(store.needsInteractivePayloadRefresh)
+        #expect(store.hasMissingInteractivePayloadWithoutAttempt)
+        #expect(store.shouldResetInteractiveRefreshPipeline)
     }
 }

@@ -65,6 +65,10 @@ final class AppStore {
         return Date().timeIntervalSince(last)
     }
 
+    private var todayAllKey: PayloadCacheKey {
+        PayloadCacheKey(period: .today, provider: .all)
+    }
+
     private var currentKey: PayloadCacheKey {
         PayloadCacheKey(period: selectedPeriod, provider: selectedProvider)
     }
@@ -76,7 +80,16 @@ final class AppStore {
     /// Today (across all providers) is pinned for the always-visible menubar icon, independent of
     /// the popover's selected period or provider.
     var todayPayload: MenubarPayload? {
-        cache[PayloadCacheKey(period: .today, provider: .all)]?.payload
+        cache[todayAllKey]?.payload
+    }
+
+    var todayPayloadAgeSeconds: Int? {
+        guard let cached = cache[todayAllKey] else { return nil }
+        return Int(Date().timeIntervalSince(cached.fetchedAt))
+    }
+
+    var needsStatusPayloadRefresh: Bool {
+        cache[todayAllKey]?.isFresh != true
     }
 
     /// All-provider payload for the selected period. Used by the tab strip to show
@@ -100,14 +113,18 @@ final class AppStore {
         staleInteractivePayloadAgeSeconds != nil
     }
 
+    var hasMissingInteractivePayloadWithoutAttempt: Bool {
+        cache[currentKey] == nil && !isCurrentKeyLoading && !hasAttemptedCurrentKeyLoad
+    }
+
     var shouldResetInteractiveRefreshPipeline: Bool {
-        hasStaleLoading || hasStaleInteractivePayload
+        hasStaleLoading || hasStaleInteractivePayload || hasMissingInteractivePayloadWithoutAttempt
     }
 
     var staleInteractivePayloadAgeSeconds: Int? {
         let keys = Set([
             currentKey,
-            PayloadCacheKey(period: .today, provider: .all),
+            todayAllKey,
             PayloadCacheKey(period: selectedPeriod, provider: .all),
         ])
         let staleAges = keys.compactMap { key -> TimeInterval? in
@@ -119,10 +136,9 @@ final class AppStore {
     }
 
     var needsInteractivePayloadRefresh: Bool {
-        let todayKey = PayloadCacheKey(period: .today, provider: .all)
         let periodAllKey = PayloadCacheKey(period: selectedPeriod, provider: .all)
         return cache[currentKey]?.isFresh != true ||
-            cache[todayKey]?.isFresh != true ||
+            cache[todayAllKey]?.isFresh != true ||
             cache[periodAllKey]?.isFresh != true ||
             hasStaleLoading
     }
@@ -149,16 +165,7 @@ final class AppStore {
     /// all-provider data in parallel so tab strip costs stay in sync with the hero.
     func switchTo(period: Period) {
         selectedPeriod = period
-        switchTask?.cancel()
-        switchTask = Task {
-            if selectedProvider == .all {
-                await refresh(includeOptimize: false, force: true)
-            } else {
-                async let main: Void = refresh(includeOptimize: false, force: true)
-                async let all: Void = refreshQuietly(period: period)
-                _ = await (main, all)
-            }
-        }
+        startInteractiveSelectionRefresh()
     }
 
     /// Switch to a provider filter. Cancels any in-flight switch so rapid tab tapping only
@@ -166,13 +173,21 @@ final class AppStore {
     /// in parallel so the tab strip costs stay in sync with the hero.
     func switchTo(provider: ProviderFilter) {
         selectedProvider = provider
+        startInteractiveSelectionRefresh()
+    }
+
+    private func startInteractiveSelectionRefresh() {
         switchTask?.cancel()
+        resetLoadingState()
+        let period = selectedPeriod
+        let provider = selectedProvider
+        lastErrorByKey[PayloadCacheKey(period: period, provider: provider)] = nil
         switchTask = Task {
             if provider == .all {
-                await refresh(includeOptimize: false, force: true)
+                await refresh(includeOptimize: false, force: true, showLoading: true)
             } else {
-                async let main: Void = refresh(includeOptimize: false, force: true)
-                async let all: Void = refreshQuietly(period: selectedPeriod)
+                async let main: Void = refresh(includeOptimize: false, force: true, showLoading: true)
+                async let all: Void = refreshQuietly(period: period)
                 _ = await (main, all)
             }
         }
@@ -239,10 +254,14 @@ final class AppStore {
         }
     }
 
-    private func invalidateStaleDayCache() {
+    private func currentCacheDate() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: Date())
+        return formatter.string(from: Date())
+    }
+
+    private func invalidateStaleDayCache() {
+        let today = currentCacheDate()
         if cacheDate != today {
             payloadRefreshGeneration &+= 1
             cache.removeAll()
@@ -266,7 +285,7 @@ final class AppStore {
         let cacheDateAtStart = cacheDate
         let generationAtStart = payloadRefreshGeneration
         if !force, cache[key]?.isFresh == true { return }
-        if !force, inFlightKeys.contains(key) { return }
+        if inFlightKeys.contains(key) { return }
         inFlightKeys.insert(key)
         attemptedKeys.insert(key)
         lastErrorByKey[key] = nil
@@ -309,7 +328,8 @@ final class AppStore {
             // fetch, this payload was computed against yesterday's date and
             // would pollute today's freshly-cleared cache. Drop it; the next
             // tick will refetch with today's data.
-            if cacheDate != cacheDateAtStart {
+            if cacheDate != cacheDateAtStart || cacheDate != currentCacheDate() {
+                invalidateStaleDayCache()
                 NSLog("CodeBurn: dropping fetch result for \(key.period.rawValue)/\(key.provider.rawValue) — calendar rolled mid-fetch")
                 return
             }
@@ -324,7 +344,10 @@ final class AppStore {
                     let fallback = try await DataClient.fetch(period: key.period, provider: key.provider, includeOptimize: false)
                     guard !Task.isCancelled else { return }
                     if generationAtStart != payloadRefreshGeneration { return }
-                    if cacheDate != cacheDateAtStart { return }
+                    if cacheDate != cacheDateAtStart || cacheDate != currentCacheDate() {
+                        invalidateStaleDayCache()
+                        return
+                    }
                     cache[key] = CachedPayload(payload: fallback, fetchedAt: Date())
                     lastSuccessByKey[key] = Date()
                     lastErrorByKey[key] = nil
@@ -346,10 +369,21 @@ final class AppStore {
     /// Background refresh for a period other than the visible one (e.g. keeping today fresh for the menubar badge).
     /// Does not toggle isLoading, so the popover's loading overlay is unaffected.
     /// Always uses the .all provider since the menubar badge shows total spend.
-    func refreshQuietly(period: Period) async {
+    func refreshQuietly(period: Period, force: Bool = false) async {
         invalidateStaleDayCache()
+        let key = PayloadCacheKey(period: period, provider: .all)
+        if !force, cache[key]?.isFresh == true { return }
+        if inFlightKeys.contains(key) { return }
+        inFlightKeys.insert(key)
+        attemptedKeys.insert(key)
         let cacheDateAtStart = cacheDate
         let generationAtStart = payloadRefreshGeneration
+        if period == .today, let age = todayPayloadAgeSeconds, age > 120 {
+            NSLog("CodeBurn: refreshing stale today status payload after %ds", age)
+        }
+        defer {
+            inFlightKeys.remove(key)
+        }
         do {
             let fresh = try await DataClient.fetch(period: period, provider: .all, includeOptimize: false)
             if generationAtStart != payloadRefreshGeneration {
@@ -358,8 +392,10 @@ final class AppStore {
             }
             // Same day-rollover guard as refresh(): drop yesterday's payload if
             // the calendar rolled over during the fetch.
-            if cacheDate != cacheDateAtStart { return }
-            let key = PayloadCacheKey(period: period, provider: .all)
+            if cacheDate != cacheDateAtStart || cacheDate != currentCacheDate() {
+                invalidateStaleDayCache()
+                return
+            }
             cache[key] = CachedPayload(payload: fresh, fetchedAt: Date())
             lastSuccessByKey[key] = Date()
             lastErrorByKey[key] = nil
@@ -582,7 +618,7 @@ final class AppStore {
 
     var aggregateQuotaStatus: AggregateQuotaStatus {
         var providers: [(name: String, percent: Double)] = []
-        if case .loaded = subscriptionLoadState, let usage = subscription {
+        if let usage = subscription, shouldIncludeCachedQuota(loadState: subscriptionLoadState) {
             let worst = [
                 usage.fiveHourPercent,
                 usage.sevenDayPercent,
@@ -591,7 +627,7 @@ final class AppStore {
             ].compactMap { $0 }.max() ?? 0
             if worst > 0 { providers.append(("Claude", worst)) }
         }
-        if case .loaded = codexLoadState, let usage = codexUsage {
+        if let usage = codexUsage, shouldIncludeCachedQuota(loadState: codexLoadState) {
             let worst = max(usage.primary?.usedPercent ?? 0, usage.secondary?.usedPercent ?? 0)
             if worst > 0 { providers.append(("Codex", worst)) }
         }
@@ -600,6 +636,15 @@ final class AppStore {
         let sorted = providers.sorted { $0.percent > $1.percent }
         let warnings = sorted.filter { $0.percent >= 70 }
         return AggregateQuotaStatus(severity: severity, warnings: warnings)
+    }
+
+    private func shouldIncludeCachedQuota(loadState: SubscriptionLoadState) -> Bool {
+        switch loadState {
+        case .notBootstrapped, .bootstrapping, .noCredentials:
+            return false
+        case .loading, .loaded, .failed, .terminalFailure, .transientFailure:
+            return true
+        }
     }
 
     func quotaSummary(for filter: ProviderFilter) -> QuotaSummary? {
@@ -799,6 +844,7 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
     case claude = "Claude"
     case codex = "Codex"
     case cursor = "Cursor"
+    case cursorAgent = "Cursor Agent"
     case copilot = "Copilot"
     case droid = "Droid"
     case gemini = "Gemini"
@@ -812,16 +858,21 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
     case omp = "OMP"
     case rooCode = "Roo Code"
     case crush = "Crush"
+    case antigravity = "Antigravity"
+    case goose = "Goose"
 
     var id: String { rawValue }
 
     var providerKeys: [String] {
         switch self {
-        case .cursor: ["cursor", "cursor agent"]
+        case .cursor: ["cursor"]
+        case .cursorAgent: ["cursor-agent", "cursor agent"]
         case .rooCode: ["roo-code", "roo code"]
         case .kiloCode: ["kilo-code", "kilocode"]
         case .ibmBob: ["ibm-bob", "ibm bob"]
         case .openclaw: ["openclaw"]
+        case .antigravity: ["antigravity"]
+        case .goose: ["goose"]
         default: [rawValue.lowercased()]
         }
     }
@@ -832,6 +883,7 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
         case .claude: "claude"
         case .codex: "codex"
         case .cursor: "cursor"
+        case .cursorAgent: "cursor-agent"
         case .copilot: "copilot"
         case .droid: "droid"
         case .gemini: "gemini"
@@ -845,6 +897,8 @@ enum ProviderFilter: String, CaseIterable, Identifiable {
         case .omp: "omp"
         case .rooCode: "roo-code"
         case .crush: "crush"
+        case .antigravity: "antigravity"
+        case .goose: "goose"
         }
     }
 }

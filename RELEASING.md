@@ -120,25 +120,25 @@ git push origin mac-v0.9.8
 The `.github/workflows/release-menubar.yml` workflow automatically detects the `mac-v*` tag and:
 
 1. Checks out the repo
-2. Runs `mac/Scripts/package-app.sh 0.9.8`
+2. Runs `mac/Scripts/package-app.sh v0.9.8`
 3. Signs the app bundle (ad-hoc signing)
-4. Creates a zip file: `CodeBurnMenubar-0.9.8.zip`
-5. Computes a SHA-256 checksum: `CodeBurnMenubar-0.9.8.zip.sha256`
+4. Creates a zip file: `CodeBurnMenubar-v0.9.8.zip`
+5. Computes a SHA-256 checksum: `CodeBurnMenubar-v0.9.8.zip.sha256`
 6. Uploads both to a GitHub Release named "Menubar v0.9.8"
 
 The script output on the build machine shows:
 
 ```
-✓ Built /path/mac/.build/dist/CodeBurnMenubar-0.9.8.zip
-✓ Checksum /path/mac/.build/dist/CodeBurnMenubar-0.9.8.zip.sha256
-<sha256-hash>  CodeBurnMenubar-0.9.8.zip
+✓ Built /path/mac/.build/dist/CodeBurnMenubar-v0.9.8.zip
+✓ Checksum /path/mac/.build/dist/CodeBurnMenubar-v0.9.8.zip.sha256
+<sha256-hash>  CodeBurnMenubar-v0.9.8.zip
 ```
 
 No manual action is needed; the workflow handles everything.
 
 ### 4. Verify the Release
 
-After the workflow completes, the GitHub Release page shows the zip and sha256 files. The menubar installer command in the CLI calls `npx codeburn menubar`, which fetches the latest release from GitHub and installs it into `~/Applications`.
+After the workflow completes, the GitHub Release page shows the zip and sha256 files. The installed CLI command `codeburn menubar --force` fetches the newest `mac-v*` menubar release that includes both assets, verifies the checksum and bundle identity, and installs it into `~/Applications`.
 
 ## Homebrew Tap Update
 
@@ -227,12 +227,12 @@ If a release is published with broken assets (e.g., a menubar zip with a build e
 Use `gh release upload` with the `--clobber` flag to overwrite existing files:
 
 ```bash
-# After re-running mac/Scripts/package-app.sh 0.9.8 to regenerate the zip and sha256
-gh release upload mac-v0.9.8 mac/.build/dist/CodeBurnMenubar-0.9.8.zip --clobber
-gh release upload mac-v0.9.8 mac/.build/dist/CodeBurnMenubar-0.9.8.zip.sha256 --clobber
+# After re-running mac/Scripts/package-app.sh v0.9.8 to regenerate the zip and sha256
+gh release upload mac-v0.9.8 mac/.build/dist/CodeBurnMenubar-v0.9.8.zip --clobber
+gh release upload mac-v0.9.8 mac/.build/dist/CodeBurnMenubar-v0.9.8.zip.sha256 --clobber
 ```
 
-The GitHub Release page will now serve the fixed assets. The menubar installer fetches from the Release by tag, so users who run `npx codeburn menubar` after the replacement get the fixed version automatically.
+The GitHub Release page will now serve the fixed assets. The menubar installer selects the newest `mac-v*` release with `CodeBurnMenubar-v*.zip` plus its checksum, so users who run `codeburn menubar --force` after the replacement get the fixed version automatically.
 
 ## Rollback
 
@@ -245,7 +245,7 @@ git push origin --delete v0.9.8
 
 npm does not allow republishing to the same version. If you must unpublish from npm, use `npm unpublish codeburn@0.9.8 --force` (requires Owner role), but this is discouraged and all users who installed that version retain it.
 
-For the menubar, tag a new mac-v0.9.9 and let the workflow build and upload it. Users will see the update pill in the menubar settings and upgrade automatically (or manually via `npx codeburn menubar --force`).
+For the menubar, tag a new mac-v0.9.9 and let the workflow build and upload it. Users will see the update pill in the menubar settings and upgrade automatically (or manually via `codeburn menubar --force`).
 
 ## Summary
 

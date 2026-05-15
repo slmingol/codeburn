@@ -13,20 +13,50 @@ enum CodeburnCLI {
     /// PATH additions for GUI-launched apps, which otherwise get a minimal PATH that misses
     /// Homebrew and npm global installs.
     private static let additionalPathEntries = ["/opt/homebrew/bin", "/usr/local/bin"]
+    private static let persistedPathFilename = "codeburn-cli-path.v1"
 
     /// Returns the argv that launches the CLI. Dev override via `CODEBURN_BIN` is honoured only
     /// if every whitespace-delimited token passes `safeArgPattern`. Otherwise falls back to the
     /// plain `codeburn` name (resolved via PATH).
     static func baseArgv() -> [String] {
-        guard let raw = ProcessInfo.processInfo.environment["CODEBURN_BIN"], !raw.isEmpty else {
-            return ["codeburn"]
+        if ProcessInfo.processInfo.environment["CODEBURN_ALLOW_DEV_BIN"] == "1",
+           let raw = ProcessInfo.processInfo.environment["CODEBURN_BIN"],
+           !raw.isEmpty
+        {
+            let parts = raw.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+            guard parts.allSatisfy(isSafe) else {
+                NSLog("CodeBurn: refusing unsafe CODEBURN_BIN; using installed codeburn")
+                return installedArgv()
+            }
+            return parts
         }
-        let parts = raw.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        guard parts.allSatisfy(isSafe) else {
-            NSLog("CodeBurn: refusing unsafe CODEBURN_BIN; using default 'codeburn'")
-            return ["codeburn"]
+
+        return installedArgv()
+    }
+
+    private static func installedArgv() -> [String] {
+        if let persisted = persistedCLIPath(), isSafe(persisted), FileManager.default.isExecutableFile(atPath: persisted) {
+            return [persisted]
         }
-        return parts
+        for candidate in additionalPathEntries.map({ "\($0)/codeburn" }) {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return [candidate]
+            }
+        }
+        return ["codeburn"]
+    }
+
+    private static func persistedCLIPath() -> String? {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        let url = support
+            .appendingPathComponent("CodeBurn", isDirectory: true)
+            .appendingPathComponent(persistedPathFilename)
+        guard let value = try? String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              value.hasPrefix("/")
+        else { return nil }
+        return value
     }
 
     /// Builds a `Process` that runs the CLI with the given subcommand args. Uses `/usr/bin/env`

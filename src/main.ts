@@ -398,10 +398,30 @@ program
       const periodInfo = getDateRange(opts.period)
       const now = new Date()
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const todayRange: DateRange = { start: todayStart, end: now }
+      const todayStr = toDateString(todayStart)
       const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+      const rangeStartStr = toDateString(periodInfo.range.start)
+      const rangeEndStr = toDateString(periodInfo.range.end)
       const isAllProviders = pf === 'all'
 
       const cache = await hydrateCache()
+      let todayAllProjects: ProjectSummary[] | null = null
+      let todayAllDays: ReturnType<typeof aggregateProjectsIntoDays> | null = null
+
+      const getTodayAllProjects = async (): Promise<ProjectSummary[]> => {
+        if (!todayAllProjects) {
+          todayAllProjects = fp(await parseAllSessions(todayRange, 'all'))
+        }
+        return todayAllProjects
+      }
+
+      const getTodayAllDays = async (): Promise<ReturnType<typeof aggregateProjectsIntoDays>> => {
+        if (!todayAllDays) {
+          todayAllDays = aggregateProjectsIntoDays(await getTodayAllProjects())
+        }
+        return todayAllDays
+      }
 
       // CURRENT PERIOD DATA
       // - .all provider: assemble from cache + today (fast)
@@ -411,12 +431,11 @@ program
       let scanRange: DateRange
 
       if (isAllProviders) {
-        // Parse only today's sessions; historical data comes from cache to avoid double-counting
-        const todayRange: DateRange = { start: todayStart, end: new Date() }
-        const todayProjects = fp(await parseAllSessions(todayRange, 'all'))
-        const todayDays = aggregateProjectsIntoDays(todayProjects)
-        const rangeStartStr = toDateString(periodInfo.range.start)
-        const rangeEndStr = toDateString(periodInfo.range.end)
+        // Parse today's all-provider sessions once; historical data comes from cache to avoid
+        // double-counting. Reusing the same parsed object is important for the menubar path:
+        // large active sessions can OOM if this command retains multiple near-identical scans.
+        const todayProjects = await getTodayAllProjects()
+        const todayDays = await getTodayAllDays()
         const historicalDays = getDaysInRange(cache, rangeStartStr, yesterdayStr)
         const todayInRange = todayDays.filter(d => d.date >= rangeStartStr && d.date <= rangeEndStr)
         const allDays = [...historicalDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
@@ -437,14 +456,9 @@ program
       const displayNameByName = new Map(allProviders.map(p => [p.name, p.displayName]))
       const providers: ProviderCost[] = []
       if (isAllProviders) {
-        // Parse only today; historical provider costs come from cache
-        const todayRangeForProviders: DateRange = { start: todayStart, end: new Date() }
-        const todayDaysForProviders = aggregateProjectsIntoDays(fp(await parseAllSessions(todayRangeForProviders, 'all')))
-        const rangeStartStr = toDateString(periodInfo.range.start)
-        const todayStr = toDateString(todayStart)
         const allDaysForProviders = [
           ...getDaysInRange(cache, rangeStartStr, yesterdayStr),
-          ...todayDaysForProviders.filter(d => d.date === todayStr),
+          ...(await getTodayAllDays()).filter(d => d.date === todayStr),
         ]
         const providerTotals: Record<string, number> = {}
         for (const d of allDaysForProviders) {
@@ -471,11 +485,7 @@ program
       // in the cache, so the filtered view shows zero tokens (heatmap/trend still works on cost).
       const historyStartStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS))
       const allCacheDays = getDaysInRange(cache, historyStartStr, yesterdayStr)
-      // Parse only today for history; historical days come from cache
-      const todayRangeForHistory: DateRange = { start: todayStart, end: new Date() }
-      const allTodayDaysForHistory = aggregateProjectsIntoDays(fp(await parseAllSessions(todayRangeForHistory, 'all')))
-      const todayStrForHistory = toDateString(todayStart)
-      const fullHistory = [...allCacheDays, ...allTodayDaysForHistory.filter(d => d.date === todayStrForHistory)]
+      const fullHistory = [...allCacheDays, ...(await getTodayAllDays()).filter(d => d.date === todayStr)]
       const dailyHistory = fullHistory.map(d => {
         if (isAllProviders) {
           const topModels = Object.entries(d.models)

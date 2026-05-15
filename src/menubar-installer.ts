@@ -1,26 +1,29 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 
-/// Public GitHub repo that hosts signed macOS release builds. `/releases/latest` returns the
-/// newest tagged release; we filter its assets list for our zipped .app bundle.
-const RELEASE_API = 'https://api.github.com/repos/getagentseal/codeburn/releases/latest'
+/// Public GitHub repo that hosts macOS release builds. CLI and menubar releases share
+/// the repository, so we scan recent releases and choose the newest `mac-v*` release
+/// that actually contains the menubar zip.
+const RELEASE_API = 'https://api.github.com/repos/getagentseal/codeburn/releases?per_page=20'
 const APP_BUNDLE_NAME = 'CodeBurnMenubar.app'
+const EXPECTED_BUNDLE_ID = 'org.agentseal.codeburn-menubar'
 const VERSIONED_ASSET_PATTERN = /^CodeBurnMenubar-v.+\.zip$/
 const APP_PROCESS_NAME = 'CodeBurnMenubar'
 const SUPPORTED_OS = 'darwin'
 const MIN_MACOS_MAJOR = 14
+const PERSISTED_CLI_PATH = join(homedir(), 'Library', 'Application Support', 'CodeBurn', 'codeburn-cli-path.v1')
 
 export type InstallResult = { installedPath: string; launched: boolean }
 
 export type ReleaseAsset = { name: string; browser_download_url: string }
 export type ReleaseResponse = { tag_name: string; assets: ReleaseAsset[] }
-export type ResolvedAssets = { zip: ReleaseAsset; checksum: ReleaseAsset | null }
+export type ResolvedAssets = { release: ReleaseResponse; zip: ReleaseAsset; checksum: ReleaseAsset }
 
 export function resolveMenubarReleaseAssets(release: ReleaseResponse): ResolvedAssets {
   const zip = release.assets.find(a => VERSIONED_ASSET_PATTERN.test(a.name))
@@ -30,8 +33,23 @@ export function resolveMenubarReleaseAssets(release: ReleaseResponse): ResolvedA
       `Check https://github.com/getagentseal/codeburn/releases.`
     )
   }
-  const checksum = release.assets.find(a => a.name === `${zip.name}.sha256`) ?? null
-  return { zip, checksum }
+  const checksum = release.assets.find(a => a.name === `${zip.name}.sha256`)
+  if (!checksum) {
+    throw new Error(`Missing checksum asset ${zip.name}.sha256 in release ${release.tag_name}.`)
+  }
+  return { release, zip, checksum }
+}
+
+export function resolveLatestMenubarReleaseAssets(releases: ReleaseResponse[]): ResolvedAssets {
+  for (const release of releases) {
+    if (!release.tag_name.startsWith('mac-v')) continue
+    try {
+      return resolveMenubarReleaseAssets(release)
+    } catch {
+      continue
+    }
+  }
+  throw new Error('No mac-v* release with a CodeBurnMenubar-v*.zip and checksum was found.')
 }
 
 function userApplicationsDir(): string {
@@ -81,8 +99,8 @@ async function fetchLatestReleaseAssets(): Promise<ResolvedAssets> {
   if (!response.ok) {
     throw new Error(`GitHub release lookup failed: HTTP ${response.status}`)
   }
-  const body = await response.json() as ReleaseResponse
-  return resolveMenubarReleaseAssets(body)
+  const body = await response.json() as ReleaseResponse[]
+  return resolveLatestMenubarReleaseAssets(body)
 }
 
 async function verifyChecksum(archivePath: string, checksumUrl: string): Promise<void> {
@@ -131,6 +149,57 @@ async function runCommand(command: string, args: string[]): Promise<void> {
   })
 }
 
+async function captureCommand(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    proc.stdout.on('data', (chunk: Buffer) => { out += chunk.toString() })
+    proc.stderr.on('data', (chunk: Buffer) => { err += chunk.toString() })
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code === 0) resolve(out.trim())
+      else reject(new Error(`${command} exited with status ${code}${err ? `: ${err.trim()}` : ''}`))
+    })
+  })
+}
+
+async function verifyBundleIdentity(appPath: string): Promise<void> {
+  const bundleID = await captureCommand('/usr/libexec/PlistBuddy', [
+    '-c',
+    'Print :CFBundleIdentifier',
+    join(appPath, 'Contents', 'Info.plist'),
+  ])
+  if (bundleID !== EXPECTED_BUNDLE_ID) {
+    throw new Error(`Unexpected menubar bundle id ${bundleID}; expected ${EXPECTED_BUNDLE_ID}.`)
+  }
+  await runCommand('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath])
+}
+
+async function resolvePersistentCodeburnPath(): Promise<string> {
+  const path = await captureCommand('/usr/bin/env', [
+    'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin',
+    'which',
+    'codeburn',
+  ])
+  if (!path.startsWith('/')) {
+    throw new Error('Resolved codeburn path is not absolute.')
+  }
+  if (path.includes('/_npx/') || path.includes('/.npm/_npx/')) {
+    throw new Error(
+      'The menubar app needs a persistent codeburn command. Install CodeBurn globally first: npm install -g codeburn'
+    )
+  }
+  return path
+}
+
+async function persistCodeburnPath(): Promise<void> {
+  const cliPath = await resolvePersistentCodeburnPath()
+  await mkdir(join(homedir(), 'Library', 'Application Support', 'CodeBurn'), { recursive: true, mode: 0o700 })
+  await writeFile(PERSISTED_CLI_PATH, `${cliPath}\n`, { mode: 0o600 })
+  await chmod(PERSISTED_CLI_PATH, 0o600)
+}
+
 async function isAppRunning(): Promise<boolean> {
   return new Promise((resolve) => {
     const proc = spawn('/usr/bin/pgrep', ['-f', APP_PROCESS_NAME])
@@ -153,6 +222,7 @@ async function killRunningApp(): Promise<void> {
 
 export async function installMenubarApp(options: { force?: boolean } = {}): Promise<InstallResult> {
   await ensureSupportedPlatform()
+  await persistCodeburnPath()
 
   const appsDir = userApplicationsDir()
   const targetPath = join(appsDir, APP_BUNDLE_NAME)
@@ -174,12 +244,8 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     console.log(`Downloading ${zip.name}...`)
     await downloadToFile(zip.browser_download_url, archivePath)
 
-    if (checksum) {
-      console.log('Verifying checksum...')
-      await verifyChecksum(archivePath, checksum.browser_download_url)
-    } else {
-      console.log('Warning: no checksum file found in release, skipping verification.')
-    }
+    console.log('Verifying checksum...')
+    await verifyChecksum(archivePath, checksum.browser_download_url)
 
     console.log('Unpacking...')
     await runCommand('/usr/bin/ditto', ['-x', '-k', archivePath, stagingDir])
@@ -188,6 +254,9 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     if (!(await exists(unpackedApp))) {
       throw new Error(`Archive did not contain ${APP_BUNDLE_NAME}.`)
     }
+
+    console.log('Verifying app bundle...')
+    await verifyBundleIdentity(unpackedApp)
 
     // Clear Gatekeeper's quarantine xattr. Without this, the first launch shows the
     // "cannot verify developer" prompt even for a signed + notarized app when the bundle

@@ -2,8 +2,8 @@ name: Release macOS Menubar
 
 # Triggers on a `mac-v*` tag push (e.g. `git tag mac-v0.8.0 && git push origin mac-v0.8.0`),
 # or manually via the Actions tab. Builds a universal arm64+x86_64 bundle, ad-hoc signs it,
-# zips via `ditto`, and uploads the zip to the GitHub Release. `npx codeburn menubar` clears
-# the download quarantine flag on install so Gatekeeper stays quiet.
+# zips via `ditto`, and uploads the zip to the GitHub Release. The installer verifies
+# the checksum and bundle identity before replacing the local app.
 on:
   push:
     tags:
@@ -60,13 +60,15 @@ jobs:
             Install with:
 
             ```
-            npx codeburn menubar
+            npm install -g codeburn
+            codeburn menubar
             ```
 
-            That command drops the app into `~/Applications`, clears the download
-            quarantine, and launches it. If you download the zip from this page directly
-            and macOS shows "cannot verify developer", right-click the app in Finder and
-            pick Open to whitelist it once.
+            That command drops the app into `~/Applications`, records the persistent
+            `codeburn` CLI path used by the menubar, verifies the downloaded checksum,
+            clears quarantine after bundle verification, and launches it. If you download
+            the zip from this page directly and macOS shows "cannot verify developer",
+            right-click the app in Finder and pick Open to whitelist it once.
           files: |
             mac/.build/dist/CodeBurnMenubar-${{ steps.version.outputs.value }}.zip
             mac/.build/dist/CodeBurnMenubar-${{ steps.version.outputs.value }}.zip.sha256
