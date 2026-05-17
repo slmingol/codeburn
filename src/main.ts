@@ -482,10 +482,24 @@ program
         scanProjects = todayProjects
         scanRange = periodInfo.range
       } else {
-        const projects = fp(await parseAllSessions(periodInfo.range, pf))
-        currentData = buildPeriodData(periodInfo.label, projects)
-        scanProjects = projects
-        scanRange = periodInfo.range
+        // Per-provider: parse only today (fast), use cache for historical days.
+        // The cache stores per-provider cost+calls per day, so we extract those
+        // and combine with today's fully-parsed provider data.
+        const todayProviderProjects = fp(await parseAllSessions(todayRange, pf))
+        const todayData = buildPeriodData(periodInfo.label, todayProviderProjects)
+        const historicalDays = getDaysInRange(cache, rangeStartStr, yesterdayStr)
+        let histCost = 0, histCalls = 0
+        for (const d of historicalDays) {
+          const prov = d.providers[pf]
+          if (prov) { histCost += prov.cost; histCalls += prov.calls }
+        }
+        currentData = {
+          ...todayData,
+          cost: todayData.cost + histCost,
+          calls: todayData.calls + histCalls,
+        }
+        scanProjects = todayProviderProjects
+        scanRange = todayRange
       }
 
       // PROVIDERS

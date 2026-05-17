@@ -279,26 +279,29 @@ enum ClaudeCredentialStore {
     }
 
     private static func readOurCache() throws -> CredentialRecord? {
-        if let record = try readOurKeychainCache() {
-            return record
+        // Migrate: if credentials exist in keychain from a previous build, move to file.
+        if let keychainRecord = try? readOurKeychainCache() {
+            try? writeOurFileCache(record: keychainRecord)
+            deleteOurKeychainCache()
+            return keychainRecord
         }
 
         let url = cacheFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        // Route through SafeFile.read so we lstat for symlinks before opening
-        // and bound the read with maxCredentialBytes. Without this, an
-        // attacker who can plant a symlink in ~/Library/Application Support/
-        // CodeBurn/ between disconnect and reconnect could redirect our read
-        // to /dev/zero (unbounded memory) or another file the user owns.
         let data = try SafeFile.read(from: url.path, maxBytes: maxCredentialBytes)
         guard let record = try? JSONDecoder().decode(CredentialRecord.self, from: data) else { return nil }
-        try? writeOurKeychainCache(record: record)
-        try? FileManager.default.removeItem(at: url)
         return record
     }
 
     private static func writeOurCache(record: CredentialRecord) throws {
-        try writeOurKeychainCache(record: record)
+        try writeOurFileCache(record: record)
+    }
+
+    private static func writeOurFileCache(record: CredentialRecord) throws {
+        let url = cacheFileURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(record)
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
     }
 
     private static func readOurKeychainCache() throws -> CredentialRecord? {
@@ -345,13 +348,17 @@ enum ClaudeCredentialStore {
     }
 
     private static func deleteOurCache() {
+        deleteOurKeychainCache()
+        try? FileManager.default.removeItem(at: cacheFileURL())
+    }
+
+    private static func deleteOurKeychainCache() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: ourKeychainService,
             kSecAttrAccount as String: ourKeychainAccount,
         ]
         SecItemDelete(query as CFDictionary)
-        try? FileManager.default.removeItem(at: cacheFileURL())
     }
 
     private static func cacheInMemory(_ record: CredentialRecord) {

@@ -5,19 +5,11 @@ import { homedir } from 'os'
 import { join } from 'path'
 import type { DateRange, ProjectSummary } from './types.js'
 
-// Bumped to 6 alongside the Claude 1-hour cache-write pricing fix: prior
-// daily entries priced all Claude cache writes at the 5-minute rate, so
-// cached historical cost/model/provider/category totals would remain
-// under-reported unless discarded and recomputed from raw sessions.
-export const DAILY_CACHE_VERSION = 6
-// MIN_SUPPORTED_VERSION bumped to 6 too. The migration path
-// (isMigratableCache + migrateDays) only fills in missing default fields;
-// it does NOT recompute the providers / categories / models rollups from
-// session data, because those raw sessions are not stored in the cache.
-// So a migrated v5 cache would carry forward stale pricing totals for
-// the full cache retention window. Setting the floor to 6 forces older
-// caches to be discarded and recomputed cleanly.
-const MIN_SUPPORTED_VERSION = 6
+// Bumped to 7: new providers (Codebuff, Mistral Vibe, Kimi, Cline) and
+// the per-provider menubar path now reads historical cost from the cache.
+// Stale entries computed by older binaries may carry incorrect totals.
+export const DAILY_CACHE_VERSION = 7
+const MIN_SUPPORTED_VERSION = 7
 const DAILY_CACHE_FILENAME = 'daily-cache.json'
 
 export type DailyEntry = {
