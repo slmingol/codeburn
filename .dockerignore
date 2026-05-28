@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.git/
+.cache/
+*.sqlite
+*.log
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+assets/discord-*.png
+desktop/
+appstore/
+mac/
+gnome/
+docs/
+tests/

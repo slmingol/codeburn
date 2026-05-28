@@ -1,0 +1,11 @@
+services:
+  codeburn:
+    build: .
+    stdin_open: true
+    tty: true
+    volumes:
+      - ${HOME}/.claude:/root/.claude:ro
+      - ${HOME}/.config/codeburn:/root/.config/codeburn
+      - ${HOME}/.cache/codeburn:/root/.cache/codeburn
+    environment:
+      - CODEBURN_CACHE_DIR=/root/.cache/codeburn
