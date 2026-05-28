@@ -1,0 +1,61 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release-post-merge.outputs.release_created || steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release-post-merge.outputs.tag_name || steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Auto-merge Release PR
+        id: merge
+        if: steps.release.outputs.pr
+        run: |
+          PR_NUMBER=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.number')
+
+          for i in $(seq 1 60); do
+            PENDING=$(gh pr checks "$PR_NUMBER" --json state --jq '[.[] | select(.state != "SUCCESS" and .state != "SKIPPED")] | length' 2>/dev/null || echo "waiting")
+            if [ "$PENDING" = "0" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          gh pr merge "$PR_NUMBER" --squash --delete-branch
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: googleapis/release-please-action@v5
+        id: release-post-merge
+        if: steps.merge.outputs.merged == 'true'
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
