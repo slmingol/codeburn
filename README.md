@@ -62,6 +62,43 @@ bunx codeburn
 dx codeburn
 ```
 
+## Docker
+
+Pull the pre-built image from GHCR and run any codeburn command against your local AI session data:
+
+```bash
+docker run --rm -it \
+  -v "$HOME/.claude:/root/.claude:ro" \
+  -v "$HOME/.config/codeburn:/root/.config/codeburn" \
+  -v "$HOME/.cache/codeburn:/root/.cache/codeburn" \
+  ghcr.io/slmingol/codeburn:latest today
+```
+
+Or use the production Compose file (pulls the pre-built image, always fetches latest):
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm codeburn today
+docker compose -f docker-compose.prod.yml run --rm codeburn report -p 30days
+docker compose -f docker-compose.prod.yml run --rm codeburn dashboard
+```
+
+To build and run locally instead:
+
+```bash
+docker compose build
+docker compose run --rm codeburn today
+```
+
+Three host paths are mounted into the container:
+
+| Host | Container | Access |
+|------|-----------|--------|
+| `~/.claude` | `/root/.claude` | read-only |
+| `~/.config/codeburn` | `/root/.config/codeburn` | read-write (plan/currency config) |
+| `~/.cache/codeburn` | `/root/.cache/codeburn` | read-write (pricing + session cache) |
+
+The interactive dashboard (`codeburn dashboard`) works via `docker compose run` because the Compose files set `stdin_open: true` and `tty: true`. Plain `docker run` needs `-it` for the same reason.
+
 ## Usage
 
 ```bash
