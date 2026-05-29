@@ -3,6 +3,10 @@ IMAGE      ?= ghcr.io/slmingol/codeburn:latest
 LOCAL_TAG  ?= codeburn:local
 CMD        ?= --help
 
+# Extra words after the first goal become CLI args (e.g. make run-prod month)
+_EXTRA     := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+_CMD       := $(or $(_EXTRA),$(CMD))
+
 RUN_FLAGS := --rm -it \
 	-v $(HOME)/.claude:/root/.claude:ro \
 	-v $(HOME)/.config/codeburn:/root/.config/codeburn \
@@ -32,10 +36,10 @@ pull:
 	$(DOCKER) pull $(IMAGE)
 
 run: build
-	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) $(CMD)
+	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) $(_CMD)
 
 run-prod:
-	$(DOCKER) run $(RUN_FLAGS) $(IMAGE) $(CMD)
+	$(DOCKER) run $(RUN_FLAGS) $(IMAGE) $(_CMD)
 
 today: build
 	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) today
@@ -51,3 +55,7 @@ optimize: build
 
 clean:
 	$(DOCKER) rmi $(LOCAL_TAG) 2>/dev/null || true
+
+# Swallow extra words passed as positional args (e.g. make run-prod month)
+%:
+	@:
