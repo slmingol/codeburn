@@ -89,6 +89,23 @@ docker compose build
 docker compose run --rm codeburn today
 ```
 
+### Makefile
+
+A `Makefile` is included for convenience. It auto-detects `podman` or `docker` (podman preferred; override with `make DOCKER=docker <target>`):
+
+```bash
+make build        # build local image from source
+make pull         # pull pre-built image from GHCR
+make today        # codeburn today (builds first)
+make report       # codeburn report (builds first)
+make dashboard    # codeburn dashboard (builds first)
+make optimize     # codeburn optimize (builds first)
+make run CMD=models --by-task   # pass arbitrary args to local image
+make run-prod CMD=today         # run GHCR image without building
+make clean        # remove local image
+make help         # show all targets + detected runtime
+```
+
 Three host paths are mounted into the container:
 
 | Host | Container | Access |
