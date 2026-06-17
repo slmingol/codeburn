@@ -31,16 +31,16 @@ help:
 	@echo "Runtime: $(DOCKER)"
 
 build:
-	$(DOCKER) build -t $(LOCAL_TAG) .
+	@$(DOCKER) build -t $(LOCAL_TAG) .
 
 pull:
-	$(DOCKER) pull $(IMAGE)
+	@$(DOCKER) pull $(IMAGE)
 
 run: build
-	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) $(_CMD)
+	@$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) $(_CMD)
 
 run-prod:
-	$(DOCKER) run $(RUN_FLAGS) $(IMAGE) $(_CMD)
+	@$(DOCKER) run $(RUN_FLAGS) $(IMAGE) $(_CMD)
 
 today: $(if $(filter today,$(_PRIMARY)),build)
 	@[ "$(_PRIMARY)" != "today" ] || $(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) today
