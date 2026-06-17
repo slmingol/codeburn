@@ -6,6 +6,7 @@ CMD        ?= --help
 # Extra words after the first goal become CLI args (e.g. make run-prod month)
 _EXTRA     := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 _CMD       := $(or $(_EXTRA),$(CMD))
+_PRIMARY   := $(firstword $(MAKECMDGOALS))
 
 RUN_FLAGS := --rm -it \
 	-v $(HOME)/.claude:/root/.claude:ro \
@@ -41,17 +42,17 @@ run: build
 run-prod:
 	$(DOCKER) run $(RUN_FLAGS) $(IMAGE) $(_CMD)
 
-today: build
-	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) today
+today: $(if $(filter today,$(_PRIMARY)),build)
+	@[ "$(_PRIMARY)" != "today" ] || $(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) today
 
-report: build
-	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) report
+report: $(if $(filter report,$(_PRIMARY)),build)
+	@[ "$(_PRIMARY)" != "report" ] || $(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) report
 
-dashboard: build
-	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) dashboard
+dashboard: $(if $(filter dashboard,$(_PRIMARY)),build)
+	@[ "$(_PRIMARY)" != "dashboard" ] || $(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) dashboard
 
-optimize: build
-	$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) optimize
+optimize: $(if $(filter optimize,$(_PRIMARY)),build)
+	@[ "$(_PRIMARY)" != "optimize" ] || $(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) optimize
 
 clean:
 	$(DOCKER) rmi $(LOCAL_TAG) 2>/dev/null || true
