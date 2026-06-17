@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/slmingol/codeburn/compare/v0.10.0...v0.10.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **make:** prevent shortcut targets from double-executing as secondary goals ([fd8e9b8](https://github.com/slmingol/codeburn/commit/fd8e9b801358410cdde378f27ffcc672ac5f0b1a))
+* **make:** silence recipe echo across all targets ([d9e0e40](https://github.com/slmingol/codeburn/commit/d9e0e40e4ff3e15521123f49062698469692bc9c))
+
 ## [0.10.0](https://github.com/slmingol/codeburn/compare/v0.9.11...v0.10.0) (2026-05-29)
 
 
