@@ -82,6 +82,20 @@ docker compose -f docker-compose.prod.yml run --rm codeburn report -p 30days
 docker compose -f docker-compose.prod.yml run --rm codeburn dashboard
 ```
 
+For a persistent shell alias, add the following to your `~/.bashrc` or `~/.zshrc`. The `--progress quiet` flag suppresses pull/create chatter:
+
+```bash
+alias codeburn='cd /path/to/codeburn && docker compose --progress quiet -f docker-compose.prod.yml run --rm codeburn'
+```
+
+Then invoke it like any local command:
+
+```bash
+codeburn today
+codeburn report -p 30days
+codeburn dashboard
+```
+
 To build and run locally instead:
 
 ```bash
