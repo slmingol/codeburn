@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.2](https://github.com/slmingol/codeburn/compare/v0.10.1...v0.10.2) (2026-06-25)
+
+
+### Bug Fixes
+
+* **compose:** set pull_policy to missing to avoid pulling on every run ([a740df3](https://github.com/slmingol/codeburn/commit/a740df3e2601a8f624d0d877e4f8b71d118b9205))
+* **make:** suppress build and pull output with -q flag ([9fa8cb2](https://github.com/slmingol/codeburn/commit/9fa8cb2d8ed3fc27b3d9133ea5d020f1283384a1))
+* **make:** suppress stderr from build and pull ([9504e75](https://github.com/slmingol/codeburn/commit/9504e752a77cc2c634c6d2beb98e6548e8a71825))
+
 ## [0.10.1](https://github.com/slmingol/codeburn/compare/v0.10.0...v0.10.1) (2026-06-17)
 
 
