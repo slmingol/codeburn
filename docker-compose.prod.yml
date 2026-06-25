@@ -1,7 +1,7 @@
 services:
   codeburn:
     image: ghcr.io/slmingol/codeburn:latest
-    pull_policy: always
+    pull_policy: missing
     stdin_open: true
     tty: true
     volumes:
