@@ -31,10 +31,10 @@ help:
 	@echo "Runtime: $(DOCKER)"
 
 build:
-	@$(DOCKER) build -q -t $(LOCAL_TAG) . > /dev/null
+	@$(DOCKER) build -q -t $(LOCAL_TAG) . > /dev/null 2>&1
 
 pull:
-	@$(DOCKER) pull -q $(IMAGE) > /dev/null
+	@$(DOCKER) pull -q $(IMAGE) > /dev/null 2>&1
 
 run: build
 	@$(DOCKER) run $(RUN_FLAGS) $(LOCAL_TAG) $(_CMD)
